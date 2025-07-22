@@ -7,17 +7,22 @@ from io import BytesIO
 import base64
 import datetime
 from typing import Optional, List
+import os
+import json
 
-# config.py から設定をインポート
-from config import SERVICE_ACCOUNT_FILE, SPREADSHEET_ID, MASTER_SHEET_NAME
+# 環境変数から設定を読み込むように変更
+# ローカル開発環境では.envファイルなどから読み込むことも検討
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+MASTER_SHEET_NAME = os.getenv("MASTER_SHEET_NAME")
+
+# CORS設定: フロントエンドが別のオリジンで動作する場合に必要
+# originsリストも環境変数から読み込むように変更
+# 複数のオリジンがある場合はカンマ区切りで設定し、split(',') でリストに変換
+origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000") # デフォルト値はローカル開発用
+origins = [o.strip() for o in origins_str.split(',') if o.strip()] # 空文字列を除去
 
 app = FastAPI()
 
-# CORS設定: フロントエンドが別のオリジンで動作する場合に必要
-origins = [
-    "http://localhost:3000",  # React開発サーバーのURL
-    # "https://your-frontend-domain.com", # デプロイ後のフロントエンドURL
-]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -28,12 +33,31 @@ app.add_middleware(
 
 # Google Sheets認証
 try:
-    gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
-    spreadsheet = gc.open_by_key(SPREADSHEET_ID) # open_by_id を open_by_key に修正済みの前提
+    # 環境変数からサービスアカウントのJSON文字列を読み込む
+    service_account_info_str = os.getenv("SERVICE_ACCOUNT_FILE_JSON")
+    if not service_account_info_str:
+        # ローカル開発用にファイルパスからの読み込みを残す場合
+        # または、ローカルでも環境変数を使う場合は、ここは不要
+        # 例: if os.path.exists(SERVICE_ACCOUNT_FILE):
+        #        gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
+        # else:
+        raise ValueError("SERVICE_ACCOUNT_FILE_JSON 環境変数が設定されていません。")
+    
+    # JSON文字列をPythonの辞書に変換
+    service_account_info = json.loads(service_account_info_str)
+    
+    # gspreadに辞書を渡す (ファイルパスではなく辞書を直接渡す)
+    gc = gspread.service_account_from_dict(service_account_info)
+    
+    # スプレッドシートIDとシート名も環境変数から読み込む
+    if not SPREADSHEET_ID or not MASTER_SHEET_NAME:
+        raise ValueError("SPREADSHEET_ID または MASTER_SHEET_NAME 環境変数が設定されていません。")
+        
+    spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     master_sheet = spreadsheet.worksheet(MASTER_SHEET_NAME)
 except Exception as e:
     print(f"Google Sheetsとの接続に失敗しました: {e}")
-    print("サービスアカウントのJSONファイルパス、スプレッドシートID、シート名、共有設定を確認してください。")
+    print("環境変数 SERVICE_ACCOUNT_FILE_JSON、SPREADSHEET_ID、MASTER_SHEET_NAME、およびスプレッドシートの共有設定を確認してください。")
     exit(1) # 起動時に接続エラーがあれば終了
 
 # Pydantic モデル: フロントエンドからのリクエストデータとレスポンスデータの型定義
