@@ -1,35 +1,28 @@
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict # ConfigDictをインポート
 import gspread
 import qrcode
 from io import BytesIO
 import base64
 import datetime
 from typing import Optional, List
-import os # osモジュールをインポート
-import json # jsonモジュールをインポート
-
-# config.py からはもう設定をインポートしません。環境変数から直接読み込みます。
-# from config import SERVICE_ACCOUNT_FILE, SPREADSHEET_ID, MASTER_SHEET_NAME
-
-app = FastAPI()
+import os
+import json
 
 # 環境変数から設定を読み込む
-# ローカル開発環境で.envファイルなどから読み込むことも検討（FastAPI-dotenvなど）
-# ここではRenderデプロイに合わせた環境変数からの読み込みに集中
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 MASTER_SHEET_NAME = os.getenv("MASTER_SHEET_NAME")
 
-# CORS設定: フロントエンドが別のオリジンで動作する場合に必要
-# originsリストも環境変数から読み込むように変更
-# 複数のオリジンがある場合はカンマ区切りで設定し、split(',') でリストに変換
-origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000") # デフォルト値はローカル開発用
-origins = [o.strip() for o in origins_str.split(',') if o.strip()] # 空文字列を除去
+# CORS設定
+origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000")
+origins = [o.strip() for o in origins_str.split(',') if o.strip()]
+
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins, # ここが環境変数から読み込まれたoriginsになるように修正
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,59 +30,19 @@ app.add_middleware(
 
 # Google Sheets認証
 try:
-    # 環境変数からサービスアカウントのJSON文字列を読み込む
     service_account_info_str = os.getenv("SERVICE_ACCOUNT_FILE_JSON")
     if not service_account_info_str:
-        # ローカル開発用にファイルパスからの読み込みを残す場合
-        # または、ローカルでも環境変数を使う場合は、ここは不要
-        # 例: if os.path.exists(SERVICE_ACCOUNT_FILE):
-        #        gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
-        # else:
         raise ValueError("SERVICE_ACCOUNT_FILE_JSON 環境変数が設定されていません。")
-
-    # JSON文字列をPythonの辞書に変換
     service_account_info = json.loads(service_account_info_str)
-
-    # gspreadに辞書を渡す (ファイルパスではなく辞書を直接渡す)
     gc = gspread.service_account_from_dict(service_account_info)
-
-    # スプレッドシートIDとシート名も環境変数から読み込む
-    if not SPREADSHEET_ID or not MASTER_SHEET_NAME:
-        raise ValueError("SPREADSHEET_ID または MASTER_SHEET_NAME 環境変数が設定されていません。")
-
     spreadsheet = gc.open_by_key(SPREADSHEET_ID)
     master_sheet = spreadsheet.worksheet(MASTER_SHEET_NAME)
 except Exception as e:
     print(f"Google Sheetsとの接続に失敗しました: {e}")
-    print("環境変数 SERVICE_ACCOUNT_FILE_JSON、SPREADSHEET_ID、MASTER_SHEET_NAME、およびスプレッドシートの共有設定を確認してください。")
-    exit(1) # 起動時に接続エラーがあれば終了
+    print("サービスアカウントのJSON、スプレッドシートID、シート名、共有設定を確認してください。")
+    exit(1)
 
-# Pydanticモデルの定義
-class ToolBase(BaseModel):
-    name: str = Field(..., alias="名称")
-    modelNumber: Optional[str] = Field(None, alias="型番品番")
-    type: Optional[str] = Field(None, alias="種類")
-    storageLocation: Optional[str] = Field(None, alias="保管場所")
-    status: str = Field("在庫", alias="状態") # デフォルト値を設定
-    purchaseDate: Optional[str] = Field(None, alias="購入日")
-    purchasePrice: Optional[float] = Field(None, alias="購入価格")
-    recommendedReplacement: Optional[str] = Field(None, alias="推奨交換時期")
-    remarks: Optional[str] = Field(None, alias="備考")
-    imageUrl: Optional[str] = Field(None, alias="画像URL")
-
-class ToolCreate(ToolBase):
-    pass # 作成時はQRコードIDは不要
-
-class Tool(ToolBase):
-    id: str = Field(..., alias="ID (QRコード)") # QRコードのID
-    qr_code_base64: str = Field(..., description="Base64エンコードされたQRコード画像")
-
-    class Config:
-        allow_population_by_field_name = True # aliasを使ったフィールド名を許可
-        populate_by_name = True # Fieldのaliasと互換性を持たせる
-
-
-# ヘルパー関数: QRコード生成
+# QRコード生成関数 (変更なし)
 def generate_qr_code_base64(data: str) -> str:
     qr = qrcode.QRCode(
         version=1,
@@ -99,119 +52,119 @@ def generate_qr_code_base64(data: str) -> str:
     )
     qr.add_data(data)
     qr.make(fit=True)
-
     img = qr.make_image(fill_color="black", back_color="white")
     buffered = BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-# ヘルパー関数: ID生成
-def generate_tool_id():
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    # 完全にユニークにするため、マイクロ秒とランダムな数字を追加
-    unique_suffix = str(datetime.datetime.now().microsecond) + str(os.urandom(2).hex())
-    return f"TOOL-{timestamp}-{unique_suffix[:5]}" # 任意で長さを調整
+# Pydanticモデル定義
+class ToolBase(BaseModel):
+    # Pydantic V2のConfigDictを使用し、aliased_fieldsをデフォルトで含める設定
+    # ただし、FastAPIのresponse_modelではデフォルトでエイリアスは使われないはずなので、
+    # ここは基本的にvalidationのため。
+    # by_alias=True は出力時にエイリアスを使うが、今回はPythonのフィールド名を使いたいので不要
+    # populate_by_name は入力時にエイリアスがあってもフィールド名で受け取れるようにする設定
+    model_config = ConfigDict(populate_by_name=True) # V2の場合
 
+    name: str = Field(..., alias="名称")
+    modelNumber: Optional[str] = Field(None, alias="型番品番")
+    type: Optional[str] = Field(None, alias="種類")
+    storageLocation: Optional[str] = Field(None, alias="保管場所")
+    status: str = Field("在庫", alias="状態")
+    purchaseDate: Optional[str] = Field(None, alias="購入日")
+    purchasePrice: Optional[float] = Field(None, alias="購入価格")
+    recommendedReplacement: Optional[str] = Field(None, alias="推奨交換時期")
+    remarks: Optional[str] = Field(None, alias="備考")
+    imageUrl: Optional[str] = Field(None, alias="画像URL")
+
+class Tool(ToolBase):
+    id: str = Field(..., alias="ID (QRコード)") # QRコードのID
+    qr_code_base64: str = Field(..., description="Base64エンコードされたQRコード画像")
+
+# 工具登録エンドポイント (変更なし)
 @app.post("/tools/", response_model=Tool, status_code=status.HTTP_201_CREATED)
-async def create_tool(tool: ToolCreate):
-    """
-    新しい工具・治具を登録します。
-    """
-    new_id = generate_tool_id() # 新しいIDを生成
+async def create_tool(tool_data: ToolBase):
+    all_records = master_sheet.get_all_records()
+    existing_ids = {record.get("工具治具ID") for record in all_records if record.get("工具治具ID")}
 
-    # Pydanticモデルから辞書に変換し、スプレッドシートの列名に対応させる
-    tool_dict = tool.model_dump(by_alias=True) # aliasを使用して日本語キーに変換
+    new_tool_id = f"TOOL-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}-{os.urandom(2).hex()}"
+    while new_tool_id in existing_ids:
+        new_tool_id = f"TOOL-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}-{os.urandom(2).hex()}"
 
-    # 新しいIDを辞書に追加
-    tool_dict["ID (QRコード)"] = new_id
+    # Pydanticモデルから辞書に変換し、Google Sheetsの列名にマッピング
+    # `by_alias=True` を指定してエイリアス名（日本語列名）で辞書を生成
+    tool_dict_for_sheet = tool_data.model_dump(by_alias=True, exclude_none=True)
 
-    # 日付フィールドのフォーマットを調整（もし必要であれば）
-    if tool_dict.get("購入日"):
-        try:
-            # 入力形式が'YYYY-MM-DD'と仮定し、そのまま保存
-            datetime.datetime.strptime(tool_dict["購入日"], "%Y-%m-%d")
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="購入日の形式が不正です。YYYY-MM-DD形式で入力してください。"
-            )
+    # purchasePriceがNoneや空文字列の場合の処理
+    if '購入価格' not in tool_dict_for_sheet or tool_dict_for_sheet['購入価格'] is None:
+        tool_dict_for_sheet['購入価格'] = '' # 空文字列でシートに書き込む
 
-    # 必須でないフィールドでNoneの場合、空文字列に変換してシートに保存（gspreadの挙動に合わせる）
-    for key, value in tool_dict.items():
-        if value is None:
-            tool_dict[key] = ""
-    if tool_dict.get("購入価格") is None: # Noneの場合、float()でエラーになるので個別に処理
-        tool_dict["購入価格"] = ""
-    else:
-        # floatに変換可能な場合は変換、そうでない場合は元の文字列を保持またはエラー
-        try:
-            tool_dict["購入価格"] = float(tool_dict["購入価格"])
-        except (ValueError, TypeError):
-            # float変換できない場合はそのまま文字列として残すか、エラーを返すか選択
-            # 例: raise HTTPException(status_code=400, detail="購入価格は数値で入力してください。")
-            pass # 今回はそのままにしておく
+    # IDとQRコードを追加
+    tool_dict_for_sheet["工具治具ID"] = new_tool_id
 
-    # スプレッドシートのヘッダー順に値を並べる
-    # get_all_records() で取得したヘッダー順を信頼
-    headers = master_sheet.row_values(1) # 1行目のヘッダーを取得
-    new_values = [tool_dict.get(header, "") for header in headers] # ヘッダーにないキーは空文字列
+    # ヘッダーの順番に合わせて値のリストを作成
+    header = master_sheet.row_values(1)
+    values_to_append = [tool_dict_for_sheet.get(col, "") for col in header]
 
-    # スプレッドシートに行を追加
-    master_sheet.append_row(new_values)
+    master_sheet.append_row(values_to_append)
 
-    # QRコードを生成
-    qr_code_base64 = generate_qr_code_base64(new_id)
+    qr_code_base64_str = generate_qr_code_base64(new_tool_id)
 
-    # レスポンスモデルの形式に合わせて返す
+    # レスポンスのためにPydanticモデルのインスタンスを返す
+    # ここでPydanticのフィールド名（name, modelNumberなど）でデータを準備
+    return_tool_data = tool_data.model_dump(exclude_none=True)
     return_tool = Tool(
-        **{
-            "ID (QRコード)": new_id,
-            **tool_dict,
-            "qr_code_base64": qr_code_base64
-        }
+        id=new_tool_id,
+        **return_tool_data,
+        qr_code_base64=qr_code_base64_str
     )
     return return_tool
 
-
+# 工具一覧取得エンドポイント
 @app.get("/tools/", response_model=List[Tool])
 async def get_all_tools():
     """
     登録されている全ての工具・治具の一覧を取得します。
     """
-    all_records = master_sheet.get_all_records() # ヘッダー行をキーとする辞書のリストを返す
+    all_records = master_sheet.get_all_records()
 
     tools_list = []
     for record in all_records:
-        # デバッグ出力: 処理中のレコードの生データ
         print(f"Debug: 処理中のレコード (raw): {record}")
 
-        tool_id = record.get("工具治具ID") # スプレッドシートの正確な列名に修正
+        tool_id = record.get("工具治具ID")
         if not tool_id:
-            print(f"Debug: '工具治具ID' が見つからないか空のレコードをスキップ: {record}") # IDがない場合のデバッグも追加
-            continue # IDがないレコードはスキップ
+            print(f"Debug: '工具治具ID' が見つからないか空のレコードをスキップ: {record}")
+            continue
 
         qr_code_b64 = generate_qr_code_base64(tool_id)
 
-        # Pydanticモデルの形式に合わせてデータを整形
-        # recordはget_all_records()で取得した辞書。キーはスプレッドシートのヘッダー名
-        # ToolモデルのコンストラクタはPython変数名（name, modelNumberなど）でデータを期待する
         formatted_record = {
-            "id": record.get("工具治具ID"), # スプレッドシートの正確な列名
-            "name": record.get("名称"), # スプレッドシートの正確な列名
-            "modelNumber": record.get("型番品番"), # スプレッドシートの正確な列名
-            "type": record.get("種類"), # スプレッドシートの正確な列名
-            "storageLocation": record.get("保管場所"), # スプレッドシートの正確な列名
-            "status": record.get("状態"), # スプレッドシートの正確な列名
-            "purchaseDate": record.get("購入日"), # スプレッドシートの正確な列名
-            "purchasePrice": float(record.get("購入価格")) if record.get("購入価格") else 0.0, # Noneや空文字列の場合も対応
-            "recommendedReplacement": record.get("推奨交換時期"), # スプレッドシートの正確な列名
-            "remarks": record.get("備考"), # スプレッドシートの正確な列名
-            "imageUrl": record.get("画像URL"), # スプレッドシートの正確な列名
+            "id": record.get("工具治具ID"),
+            "name": record.get("名称"),
+            "modelNumber": record.get("型番品番"),
+            "type": record.get("種類"),
+            "storageLocation": record.get("保管場所"),
+            "status": record.get("状態"),
+            "purchaseDate": record.get("購入日"),
+            "purchasePrice": float(record.get("購入価格")) if record.get("購入価格") else 0.0,
+            "recommendedReplacement": record.get("推奨交換時期"),
+            "remarks": record.get("備考"),
+            "imageUrl": record.get("画像URL"),
             "qr_code_base64": qr_code_b64
         }
         # デバッグ出力: Pydanticモデルに渡す直前の整形済みデータ
-        print(f"Debug: 変換後の formatted_record: {formatted_record}")
+        print(f"Debug: Pydanticモデルに渡す直前の整形済みデータ: {formatted_record}")
 
-        tools_list.append(Tool(**formatted_record))
+        # Pydanticモデルのインスタンスを生成
+        # ここでPydanticのField名 (name, modelNumber) が使われる
+        tool_instance = Tool(**formatted_record)
 
+        # Debug: Pydanticモデルのインスタンスの内容
+        print(f"Debug: Pydanticモデルインスタンス: {tool_instance.model_dump_json()}") # JSON形式で出力して確認
+
+        tools_list.append(tool_instance)
+
+    # FastAPIがresponse_modelに基づいて自動的にJSONにシリアライズする
+    # この際、デフォルトではPydanticのフィールド名（name, modelNumberなど）がキーとして使用される
     return tools_list
