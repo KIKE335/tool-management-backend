@@ -121,14 +121,16 @@ async def create_tool(tool_data: ToolBase):
     return return_tool
 
 # 工具一覧取得エンドポイント
-@app.get("/tools/", response_model=List[Tool])
+# main.py の get_all_tools 関数を以下のように修正してください
+
+@app.get("/tools/")
 async def get_all_tools():
     """
     登録されている全ての工具・治具の一覧を取得します。
     """
     all_records = master_sheet.get_all_records()
 
-    tools_list = []
+    tools_list = [] # ここで空のリストを初期化します
     for record in all_records:
         print(f"Debug: 処理中のレコード (raw): {record}")
 
@@ -139,6 +141,7 @@ async def get_all_tools():
 
         qr_code_b64 = generate_qr_code_base64(tool_id)
 
+        # Pydanticモデルの形式に合わせてデータを整形 (これは既に正しく英語キーに変換されています)
         formatted_record = {
             "id": record.get("工具治具ID"),
             "name": record.get("名称"),
@@ -153,18 +156,8 @@ async def get_all_tools():
             "imageUrl": record.get("画像URL"),
             "qr_code_base64": qr_code_b64
         }
-        # デバッグ出力: Pydanticモデルに渡す直前の整形済みデータ
-        print(f"Debug: Pydanticモデルに渡す直前の整形済みデータ: {formatted_record}")
+        # 変換されたレコードをリストに追加します
+        tools_list.append(formatted_record)
 
-        # Pydanticモデルのインスタンスを生成
-        # ここでPydanticのField名 (name, modelNumber) が使われる
-        tool_instance = Tool(**formatted_record)
-
-        # Debug: Pydanticモデルのインスタンスの内容
-        print(f"Debug: Pydanticモデルインスタンス: {tool_instance.model_dump_json()}") # JSON形式で出力して確認
-
-        tools_list.append(tool_instance)
-
-    # FastAPIがresponse_modelに基づいて自動的にJSONにシリアライズする
-    # この際、デフォルトではPydanticのフィールド名（name, modelNumberなど）がキーとして使用される
+    # 変換済みのレコードのリストを返します
     return tools_list
