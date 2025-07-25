@@ -6,7 +6,7 @@ import qrcode
 from io import BytesIO
 import base64
 import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal 
 import os
 import json
 
@@ -66,20 +66,23 @@ class ToolBase(BaseModel):
     # populate_by_name は入力時にエイリアスがあってもフィールド名で受け取れるようにする設定
     model_config = ConfigDict(populate_by_name=True) # V2の場合
 
-    name: str = Field(..., alias="名称")
-    modelNumber: Optional[str] = Field(None, alias="型番品番")
-    type: Optional[str] = Field(None, alias="種類")
-    storageLocation: Optional[str] = Field(None, alias="保管場所")
-    status: str = Field("在庫", alias="状態")
-    purchaseDate: Optional[str] = Field(None, alias="購入日")
-    purchasePrice: Optional[float] = Field(None, alias="購入価格")
-    recommendedReplacement: Optional[str] = Field(None, alias="推奨交換時期")
-    remarks: Optional[str] = Field(None, alias="備考")
-    imageUrl: Optional[str] = Field(None, alias="画像URL")
+    name: str = Field(..., examples=["製品X001治具"])
+    modelNumber: str = Field(..., examples=["X001JIGU"])
+    type: str = Field(..., examples=["治具", "工具"])
+    storageLocation: str = Field(..., examples=["第一工場", "第二工場"])
+    status: Literal["在庫", "貸出中", "メンテナンス中", "廃棄済"] = Field(..., examples=["在庫", "貸出中"])
+    purchaseDate: str = Field(default="", examples=["2023-01-01"])
+    purchasePrice: Optional[float] = Field(default=0.0, examples=[10000.0])
+    recommendedReplacement: str = Field(default="", examples=["使用回数300回", "2025-12-31"])
+    remarks: str = Field(default="", examples=["優しく使ってください。", "特になし"])
+    imageUrl: str = Field(default="", examples=["https://example.com/image.jpg"])
 
 class Tool(ToolBase):
     id: str = Field(..., alias="ID (QRコード)") # QRコードのID
     qr_code_base64: str = Field(..., description="Base64エンコードされたQRコード画像")
+
+class ToolUpdateStatus(BaseModel):
+    status: Literal["在庫", "貸出中", "メンテナンス中", "廃棄済"] = Field(..., examples=["貸出中", "在庫"])
 
 # 工具登録エンドポイント (変更なし)
 @app.post("/tools/", response_model=Tool, status_code=status.HTTP_201_CREATED)
@@ -161,3 +164,68 @@ async def get_all_tools():
 
     # 変換済みのレコードのリストを返します
     return tools_list
+
+@app.put("/tools/{tool_id}/status", response_model=Tool)
+async def update_tool_status(tool_id: str, tool_update: ToolUpdateStatus):
+    """
+    特定の工具・治具の状態を更新します。
+    """
+    try:
+        all_records = master_sheet.get_all_records()
+        record_found = None
+        record_row_index = -1 # Google Sheetsの行番号 (1ベース)
+
+        # ヘッダー行を考慮して1から始める
+        for i, record in enumerate(all_records):
+            if record.get("工具治具ID") == tool_id:
+                record_found = record
+                record_row_index = i + 2 # Google Sheetsは1ベース、ヘッダー行が1行目なので+2
+                break
+
+        if not record_found:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="指定された工具IDが見つかりません。")
+
+        # '状態' 列のインデックスを取得 (ヘッダーから動的に取得するのが堅牢)
+        headers = master_sheet.row_values(1) # 1行目のヘッダーを取得
+        status_col_index = -1
+        try:
+            status_col_index = headers.index("状態") + 1 # Google Sheetsは1ベース
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="スプレッドシートに「状態」列が見つかりません。")
+
+        # Google Sheetsのセルを更新
+        master_sheet.update_cell(record_row_index, status_col_index, tool_update.status)
+
+        # 更新後のレコードを取得して返すために、再度スプレッドシートから読み込み、整形します。
+        updated_records = master_sheet.get_all_records()
+        updated_tool_data = None
+        for record in updated_records:
+            if record.get("工具治具ID") == tool_id:
+                qr_code_b64 = generate_qr_code_base64(tool_id)
+                # Tool モデルのインスタンスを作成して返す
+                updated_tool_data = Tool(
+                    id=record.get("工具治具ID"),
+                    name=record.get("名称"),
+                    modelNumber=record.get("型番品番"),
+                    type=record.get("種類"),
+                    storageLocation=record.get("保管場所"),
+                    status=record.get("状態"),
+                    purchaseDate=record.get("購入日"),
+                    purchasePrice=float(record.get("購入価格")) if record.get("購入価格") else 0.0,
+                    recommendedReplacement=record.get("推奨交換時期"),
+                    remarks=record.get("備考"),
+                    imageUrl=record.get("画像URL"),
+                    qr_code_base64=qr_code_b64
+                )
+                break
+
+        if not updated_tool_data:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="更新後の工具データの取得に失敗しました。")
+
+        return updated_tool_data
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"工具状態更新エラー: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"工具の状態更新中にエラーが発生しました: {e}")
