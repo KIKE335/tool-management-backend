@@ -224,3 +224,29 @@ async def update_tool_status(tool_id: str, tool_update: ToolUpdateStatus):
     except Exception as e:
         print(f"工具状態更新エラー: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"工具の状態更新中にエラーが発生しました: {e}")
+
+@app.get("/tools/{tool_id}", response_model=Tool)
+async def get_tool_by_id(tool_id: str):
+    """
+    特定の工具・治具の詳細情報をIDで取得します。
+    """
+    all_records = master_sheet.get_all_records()
+    for record in all_records:
+        if record.get("工具治具ID") == tool_id:
+            qr_code_b64 = generate_qr_code_base64(tool_id)
+            # Tool モデルのインスタンスを作成して返す
+            return Tool(
+                id=record.get("工具治具ID"),
+                name=record.get("名称"),
+                modelNumber=record.get("型番品番"),
+                type=record.get("種類"),
+                storageLocation=record.get("保管場所"),
+                status=record.get("状態"),
+                purchaseDate=record.get("購入日"),
+                purchasePrice=float(record.get("購入価格")) if record.get("購入価格") else 0.0,
+                recommendedReplacement=record.get("推奨交換時期"),
+                remarks=record.get("備考"),
+                imageUrl=record.get("画像URL"),
+                qr_code_base64=qr_code_b64
+            )
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="指定された工具IDが見つかりません。")
