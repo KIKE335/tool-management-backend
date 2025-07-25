@@ -59,23 +59,18 @@ def generate_qr_code_base64(data: str) -> str:
 
 # Pydanticモデル定義
 class ToolBase(BaseModel):
-    # Pydantic V2のConfigDictを使用し、aliased_fieldsをデフォルトで含める設定
-    # ただし、FastAPIのresponse_modelではデフォルトでエイリアスは使われないはずなので、
-    # ここは基本的にvalidationのため。
-    # by_alias=True は出力時にエイリアスを使うが、今回はPythonのフィールド名を使いたいので不要
-    # populate_by_name は入力時にエイリアスがあってもフィールド名で受け取れるようにする設定
     model_config = ConfigDict(populate_by_name=True) # V2の場合
 
-    name: str = Field(..., examples=["製品X001治具"])
-    modelNumber: str = Field(..., examples=["X001JIGU"])
-    type: str = Field(..., examples=["治具", "工具"])
-    storageLocation: str = Field(..., examples=["第一工場", "第二工場"])
-    status: Literal["在庫", "貸出中", "メンテナンス中", "廃棄済"] = Field(..., examples=["在庫", "貸出中"])
-    purchaseDate: str = Field(default="", examples=["2023-01-01"])
-    purchasePrice: Optional[float] = Field(default=0.0, examples=[10000.0])
-    recommendedReplacement: str = Field(default="", examples=["使用回数300回", "2025-12-31"])
-    remarks: str = Field(default="", examples=["優しく使ってください。", "特になし"])
-    imageUrl: str = Field(default="", examples=["https://example.com/image.jpg"])
+    name: str = Field(..., alias="名称")
+    modelNumber: Optional[str] = Field(None, alias="型番品番")
+    type: Optional[str] = Field(None, alias="種類")
+    storageLocation: Optional[str] = Field(None, alias="保管場所")
+    status: Literal["在庫", "貸出中", "メンテナンス中", "廃棄済"] = Field("在庫", alias="状態")
+    purchaseDate: Optional[str] = Field(None, alias="購入日")
+    purchasePrice: Optional[float] = Field(None, alias="購入価格")
+    recommendedReplacement: Optional[str] = Field(None, alias="推奨交換時期")
+    remarks: Optional[str] = Field(None, alias="備考")
+    imageUrl: Optional[str] = Field(None, alias="画像URL")
 
 class Tool(ToolBase):
     id: str = Field(..., alias="ID (QRコード)") # QRコードのID
