@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv() # .envファイルから環境変数を読み込む
+
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, ConfigDict # ConfigDictをインポート
@@ -55,7 +58,8 @@ def generate_qr_code_base64(data: str) -> str:
     img = qr.make_image(fill_color="black", back_color="white")
     buffered = BytesIO()
     img.save(buffered, format="PNG")
-    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    return f"data:image/png;base64,{img_str}" # "data:image/png;base64," プレフィックスが付いているか
 
 # Pydanticモデル定義
 class ToolBase(BaseModel):
